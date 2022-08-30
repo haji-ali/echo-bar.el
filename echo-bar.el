@@ -44,6 +44,21 @@
   "Display text at the end of the echo area."
   :group 'applications)
 
+(defface echo-bar-face
+  '((t))
+  "Default face used for the echo bar.")
+
+(defcustom echo-bar-text-scale-factor 1
+  "Scale factor to determine the size of character in the echo-bar.
+This is in relation to a character from the echo area."
+  :group 'echo-bar
+  :type 'number)
+
+(defcustom echo-bar-right-padding 2
+  "Number of columns between the text and right margin."
+  :group 'echo-bar
+  :type 'number)
+
 (defcustom echo-bar-function #'echo-bar-default-function
   "Function that returns the text displayed in the echo bar."
   :group 'echo-bar
@@ -159,12 +174,14 @@ If nil, don't update the echo bar automatically."
 (defun echo-bar-set-text (text)
   "Set the text displayed by the echo bar to TEXT."
   (let* ((wid (+ (echo-bar--str-len text) echo-bar-right-padding))
+         (wid (* echo-bar-text-scale-factor wid))
          ;; Maximum length for the echo area message before wrap to next line
          (max-len (- (frame-width) wid 5))
-         ;; Align the text to the correct width to make it right aligned
          (spc (propertize " " 'cursor 1 'display
-                          `(space :align-to (- right-fringe ,wid)))))
-
+                          `(space :align-to (- right-fringe
+                                               ,wid)))))
+    (add-face-text-property 0 (length text)
+                            'echo-bar-face t text)
     (setq echo-bar-text (concat spc text))
 
     ;; Add the correct text to each echo bar overlay
