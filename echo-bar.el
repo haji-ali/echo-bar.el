@@ -173,12 +173,13 @@ If nil, don't update the echo bar automatically."
 
 (defun echo-bar-set-text (text)
   "Set the text displayed by the echo bar to TEXT."
-  (let* ((wid (+ (echo-bar--str-len text) echo-bar-right-padding))
+  (let* ((wid (+ (string-width text) echo-bar-right-padding))
          (wid (* echo-bar-text-scale-factor wid))
          ;; Maximum length for the echo area message before wrap to next line
          (max-len (- (frame-width) wid 5))
          (spc (propertize " " 'cursor 1 'display
-                          `(space :align-to (- right-fringe
+                          `(space :align-to (- (+ right
+                                                  right-margin)
                                                ,wid)))))
     (add-face-text-property 0 (length text)
                             'echo-bar-face t text)
