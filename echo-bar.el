@@ -86,6 +86,11 @@ See `mode-line-format' for more info about the required format."
   :group 'echo-bar
   :type 'boolean)
 
+(defcustom echo-bar-frame nil
+  "If non-nil, show echo-bar in a frame instead."
+  :group 'echo-bar
+  :type 'boolean)
+
 (defcustom echo-bar-update-interval 1
   "Interval in seconds between updating the echo bar contents.
 
@@ -119,11 +124,12 @@ If nil, don't update the echo bar automatically."
 
   ;; Create overlays in each echo area buffer. Use `get-buffer-create' to make
   ;; sure that the buffer is created even if no messages were outputted before
+  (unless echo-bar-frame
   (dolist (buf (mapcar #'get-buffer-create
                        '(" *Echo Area 0*" " *Echo Area 1*")))
     (with-current-buffer buf
       (remove-overlays (point-min) (point-max))
-      (echo-bar--new-overlay)))
+        (echo-bar--new-overlay))))
 
   ;; Start the timer to automatically update
   (when echo-bar-update-interval
@@ -143,9 +149,11 @@ If nil, don't update the echo bar automatically."
   (setq echo-bar-overlays nil)
 
   ;; Remove text from Minibuf-0
+  (if echo-bar-frame
+      (posframe-delete " *echo-bar*")
   (with-current-buffer (window-buffer
                         (minibuffer-window))
-    (delete-region (point-min) (point-max)))
+      (delete-region (point-min) (point-max))))
 
   ;; Cancel the update timer
   (cancel-function-timers #'echo-bar-update)
@@ -186,9 +194,10 @@ If nil, don't update the echo bar automatically."
     (setq echo-bar-text (concat spc text))
 
     ;; Add the correct text to each echo bar overlay
+    (if echo-bar-frame
+        (echo-bar--show-in-frame)
     (dolist (o echo-bar-overlays)
       (when (overlay-buffer o)
-
         (with-current-buffer (overlay-buffer o)
           ;; Wrap the text to the next line if the echo bar text is too long
           (if (> (mod (point-max) (frame-width)) max-len)
@@ -202,7 +211,33 @@ If nil, don't update the echo bar automatically."
       (when (get-text-property (point-min) 'echo-bar)
         (delete-region (point-min) (point-max)))
       (when (= (point-min) (point-max))
-        (insert (propertize echo-bar-text 'echo-bar t))))))
+          (insert (propertize echo-bar-text 'echo-bar t)))))))
+
+(defun echo-bar--show-in-frame ()
+  "Show echo bar text in frame."
+  ;; TODO: Avoid corfu, and maybe posframe?
+  (let ((buf-name " *echo-bar*"))
+    (with-current-buffer (corfu--make-buffer buf-name)
+      (let (buffer-read-only)
+        (with-silent-modifications
+          (erase-buffer)
+          (setq-local dimmer-disable-p t) ;; Should be in custom
+          (insert echo-bar-text))))
+    ;; TODO: Show only in main-frame somehow?
+    ;; TODO: If the frame size is too small, maybe we should not added it?
+    ;; TODO: Echo-bar is not being shown on all frames for some reason.
+    (dolist (frm (frame-list))
+      (when (and
+             (frame-live-p frm)
+             (frame-visible-p frm)
+             (minibuffer-window frm))
+        (with-selected-frame frm
+          (with-selected-window (minibuffer-window frm)
+            (posframe-show
+             buf-name
+             ;; :override-parameters `((parent-frame . ,frm))
+             :position (cons -10 -1)
+             :accept-focus nil)))))))
 
 (defun echo-bar--new-overlay (&optional remove-dead buffer)
   "Add new echo-bar overlay to BUFFER.
@@ -221,7 +256,8 @@ overlays."
 
 (defun echo-bar--minibuffer-setup ()
   "Setup the echo bar in the minibuffer."
-  (overlay-put (echo-bar--new-overlay t) 'priority 1)
+  (unless echo-bar-frame
+    (overlay-put (echo-bar--new-overlay t) 'priority 1))
   (echo-bar-update))
 
 (defun echo-bar-update ()
