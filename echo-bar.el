@@ -98,6 +98,63 @@ If nil, don't update the echo bar automatically."
   :group 'echo-bar
   :type 'number)
 
+;; Taken from corfu
+(defvar echo-bar--frame-buf-parameters
+  '((mode-line-format . nil)
+    (header-line-format . nil)
+    (tab-line-format . nil)
+    (tab-bar-format . nil) ;; Emacs 28 tab-bar-format
+    (frame-title-format . "")
+    (truncate-lines . t)
+    (cursor-in-non-selected-windows . nil)
+    (cursor-type . nil)
+    (show-trailing-whitespace . nil)
+    (display-line-numbers . nil)
+    (left-fringe-width . nil)
+    (right-fringe-width . nil)
+    (left-margin-width . 0)
+    (right-margin-width . 0)
+    (fringes-outside-margins . 0)
+    (fringe-indicator-alist . nil)
+    (indicate-empty-lines . nil)
+    (indicate-buffer-boundaries . nil)
+    (buffer-read-only . t))
+  "Default child frame buffer parameters.")
+
+;; Taken from corfu
+(defvar echo-bar--frame-parameters
+  '((no-accept-focus . t)
+    (no-focus-on-map . t)
+    (min-width . t)
+    (min-height . t)
+    (border-width . 0)
+    (outer-border-width . 0)
+    (internal-border-width . 1)
+    (child-frame-border-width . 1)
+    (left-fringe . 0)
+    (right-fringe . 0)
+    (vertical-scroll-bars . nil)
+    (horizontal-scroll-bars . nil)
+    (menu-bar-lines . 0)
+    (tool-bar-lines . 0)
+    (tab-bar-lines . 0)
+    (no-other-frame . t)
+    (unsplittable . t)
+    (undecorated . t)
+    (cursor-type . nil)
+    (no-special-glyphs . t)
+    (desktop-dont-save . t))
+  "Default child frame parameters for echo-bar.")
+
+;; Taken from corfu
+(defvar echo-bar--mouse-ignore-map
+  (let ((map (make-sparse-keymap)))
+    (dotimes (i 7)
+      (dolist (k '(mouse down-mouse drag-mouse double-mouse triple-mouse))
+        (keymap-set map (format "<%s-%s>" k (1+ i)) #'ignore)))
+    map)
+  "Ignore all mouse clicks.")
+
 (defvar echo-bar-timer nil
   "Timer used to update the echo bar.")
 
@@ -124,7 +181,8 @@ If nil, don't update the echo bar automatically."
 
   ;; Create overlays in each echo area buffer. Use `get-buffer-create' to make
   ;; sure that the buffer is created even if no messages were outputted before
-  (unless echo-bar-frame
+  (if echo-bar-frame
+      (add-hook 'after-make-frame-functions #'echo-bar--frame-after-make)
   (dolist (buf (mapcar #'get-buffer-create
                        '(" *Echo Area 0*" " *Echo Area 1*")))
     (with-current-buffer buf
@@ -150,7 +208,9 @@ If nil, don't update the echo bar automatically."
 
   ;; Remove text from Minibuf-0
   (if echo-bar-frame
-      (posframe-delete " *echo-bar*")
+      (progn
+        (echo-bar--frame-delete-all " *echo-bar*")
+        (remove-hook 'after-make-frame-functions #'echo-bar--frame-after-make))
   (with-current-buffer (window-buffer
                         (minibuffer-window))
       (delete-region (point-min) (point-max))))
@@ -195,7 +255,7 @@ If nil, don't update the echo bar automatically."
 
     ;; Add the correct text to each echo bar overlay
     (if echo-bar-frame
-        (echo-bar--show-in-frame)
+        (echo-bar--frame-show)
     (dolist (o echo-bar-overlays)
       (when (overlay-buffer o)
         (with-current-buffer (overlay-buffer o)
@@ -213,31 +273,123 @@ If nil, don't update the echo bar automatically."
       (when (= (point-min) (point-max))
           (insert (propertize echo-bar-text 'echo-bar t)))))))
 
-(defun echo-bar--show-in-frame ()
+(defun echo-bar--frame-make-buffer (name)
+  "Make buffer with NAME for use in echo-bar's frames."
+  (let ((fr face-remapping-alist)
+        (ls line-spacing)
+        (buffer (get-buffer-create name)))
+    (with-current-buffer buffer
+      ;;; XXX HACK from corfu install mouse ignore map
+      (use-local-map echo-bar--mouse-ignore-map)
+      (dolist (var echo-bar--frame-buf-parameters)
+        (set (make-local-variable (car var)) (cdr var)))
+      (setq-local face-remapping-alist (copy-tree fr)
+                  line-spacing ls)
+      buffer)))
+
+(defun echo-bar--frame-find (buffer &optional parent)
+  "Find frame display BUFFER and with a specific PARENT.
+If PARENT is nil, ignore that check."
+  (cl-find-if
+   (lambda (frame)
+     (let ((buffer-info (frame-parameter frame 'echo-bar-frame)))
+       (and
+        (or (null parent)
+            (equal (frame-parent frame) parent))
+        (or (equal (buffer-name buffer) (car buffer-info))
+            (equal buffer (cdr buffer-info))))))
+   (frame-list)))
+
+(defun echo-bar--frame-delete-all (buffer &optional parent)
+  "Delete all frames BUFFER and have a specific PARENT.
+If PARENT is nil, ignore that check."
+  (let ((buffer (get-buffer buffer))
+        frame)
+    (when buffer
+      (while (setq frame
+                   (echo-bar--frame-find buffer parent))
+        (delete-frame frame))
+      (kill-buffer buffer))))
+
+(defun echo-bar--frame-make (x y buffer &optional parent)
+  "Show BUFFER in child frame at X/Y with a specific PARENT."
+  (let* ((window-min-height 1)
+         (window-min-width 1)
+         (inhibit-redisplay t)
+         ;; The following is a hack from posframe and from corfu
+         ;; (x-gtk-resize-child-frames corfu--gtk-resize-child-frames)
+         (before-make-frame-hook)
+         (after-make-frame-functions)
+         (parent (or parent (window-frame)))
+         (frame (echo-bar--frame-find buffer parent)))
+    (unless (and (frame-live-p frame)
+                 (eq (frame-parent frame)
+                     (and (not (bound-and-true-p exwm--connection)) parent))
+                 ;; If there is more than one window, `frame-root-window' may
+                 ;; return nil.  Recreate the frame in this case.
+                 (window-live-p (frame-root-window frame)))
+      (when frame (delete-frame frame))
+      (setq frame (make-frame
+                   `((name . "echo-bar")
+                     (parent-frame . ,parent)
+                     (minibuffer . nil)
+                     ;; (minibuffer . ,(minibuffer-window parent))
+                     (width . 0) (height . 0) (visibility . nil)
+                     ,@echo-bar--frame-parameters))))
+    ;; Reset frame parameters if they changed.  For example `tool-bar-mode'
+    ;; overrides the parameter `tool-bar-lines' for every frame, including child
+    ;; frames.  The child frame API is a pleasure to work with.  It is full of
+    ;; lovely surprises.
+    (let* ((is (frame-parameters frame))
+           (should echo-bar--frame-parameters)
+           (diff (cl-loop for p in should for (k . v) = p
+                          unless (equal (alist-get k is) v) collect p)))
+      (when diff (modify-frame-parameters frame diff)))
+    (let ((win (frame-root-window frame)))
+      (unless (eq (window-buffer win) buffer)
+        (set-window-buffer win buffer))
+      ;; Disallow selection of root window (gh:minad/corfu#63)
+      (set-window-parameter win 'no-delete-other-windows t)
+      (set-window-parameter win 'no-other-window t)
+      ;; Mark window as dedicated to prevent frame reuse (gh:minad/corfu#60)
+      (set-window-dedicated-p win t))
+    (set-frame-parameter frame
+                         'echo-bar-frame
+                         (cons (buffer-name buffer) buffer))
+    (redirect-frame-focus frame parent)
+    (fit-frame-to-buffer frame)
+    (pcase-let ((`(,px . ,py) (frame-position frame)))
+      (unless (and (= x px) (= y py))
+        (set-frame-position frame x y)))
+    (make-frame-visible frame)
+    ;; Unparent child frame if EXWM is used, otherwise EXWM buffers are drawn on
+    ;; top of the Corfu child frame.
+    (when (and (bound-and-true-p exwm--connection) (frame-parent frame))
+      (set-frame-parameter frame 'parent-frame nil))
+    frame))
+
+(defun echo-bar--frame-after-make (_)
+  "Update echo bar after `make-frame'."
+  (echo-bar--frame-show))
+
+(defun echo-bar--frame-show ()
   "Show echo bar text in frame."
-  ;; TODO: Avoid corfu, and maybe posframe?
-  (let ((buf-name " *echo-bar*"))
-    (with-current-buffer (corfu--make-buffer buf-name)
+  (let ((buf-name " *echo-bar*")
+        buf)
+    (with-current-buffer (setq buf
+                               (echo-bar--frame-make-buffer buf-name))
       (let (buffer-read-only)
         (with-silent-modifications
           (erase-buffer)
-          (setq-local dimmer-disable-p t) ;; Should be in custom
           (insert echo-bar-text))))
-    ;; TODO: Show only in main-frame somehow?
-    ;; TODO: If the frame size is too small, maybe we should not added it?
-    ;; TODO: Echo-bar is not being shown on all frames for some reason.
     (dolist (frm (frame-list))
+      (let ((min-buf (minibuffer-window frm)))
       (when (and
              (frame-live-p frm)
              (frame-visible-p frm)
-             (minibuffer-window frm))
-        (with-selected-frame frm
-          (with-selected-window (minibuffer-window frm)
-            (posframe-show
-             buf-name
-             ;; :override-parameters `((parent-frame . ,frm))
-             :position (cons -10 -1)
-             :accept-focus nil)))))))
+               min-buf
+               (equal (window-frame min-buf) frm))
+          (echo-bar--frame-make -10 -1 buf frm))))))
 
 (defun echo-bar--new-overlay (&optional remove-dead buffer)
   "Add new echo-bar overlay to BUFFER.
