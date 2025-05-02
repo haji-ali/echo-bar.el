@@ -89,7 +89,15 @@ See `mode-line-format' for more info about the required format."
 (defcustom echo-bar-frame nil
   "If non-nil, show echo-bar in a frame instead."
   :group 'echo-bar
-  :type 'boolean)
+  :type 'boolean
+  :set (lambda (sym val)
+         (unless (and (boundp 'echo-bar-frame)
+                      (eq echo-bar-frame val)) ;; No change necessary
+         (when echo-bar-mode
+           (echo-bar-disable))
+         (set-default-toplevel-value sym val)
+         (when echo-bar-mode
+             (echo-bar-enable)))))
 
 (defcustom echo-bar-update-interval 1
   "Interval in seconds between updating the echo bar contents.
@@ -164,6 +172,8 @@ If nil, don't update the echo bar automatically."
 (defvar echo-bar-overlays nil
   "List of overlays displaying the echo bar contents.")
 
+(defconst echo-bar--frame-buf-name " *echo-bar*")
+
 ;;;###autoload
 (define-minor-mode echo-bar-mode
   "Display text at the end of the echo area."
@@ -209,7 +219,7 @@ If nil, don't update the echo bar automatically."
   ;; Remove text from Minibuf-0
   (if echo-bar-frame
       (progn
-        (echo-bar--frame-delete-all " *echo-bar*")
+        (echo-bar--frame-delete-all echo-bar--frame-buf-name)
         (remove-hook 'after-make-frame-functions #'echo-bar--frame-after-make))
   (with-current-buffer (window-buffer
                         (minibuffer-window))
@@ -275,17 +285,16 @@ If nil, don't update the echo bar automatically."
 
 (defun echo-bar--frame-make-buffer (name)
   "Make buffer with NAME for use in echo-bar's frames."
-  (let ((fr face-remapping-alist)
-        (ls line-spacing)
-        (buffer (get-buffer-create name)))
-    (with-current-buffer buffer
+  (let ((ls line-spacing)
+        (buffer (get-buffer name)))
+    (or buffer ;; If we have a buffer already, assume we created it.
+        (with-current-buffer (setq buffer (get-buffer-create name))
       ;;; XXX HACK from corfu install mouse ignore map
       (use-local-map echo-bar--mouse-ignore-map)
       (dolist (var echo-bar--frame-buf-parameters)
         (set (make-local-variable (car var)) (cdr var)))
-      (setq-local face-remapping-alist (copy-tree fr)
-                  line-spacing ls)
-      buffer)))
+      (setq-local line-spacing ls)
+          buffer))))
 
 (defun echo-bar--frame-find (buffer &optional parent)
   "Find frame display BUFFER and with a specific PARENT.
@@ -374,10 +383,10 @@ If PARENT is nil, ignore that check."
 
 (defun echo-bar--frame-show ()
   "Show echo bar text in frame."
-  (let ((buf-name " *echo-bar*")
-        buf)
-    (with-current-buffer (setq buf
-                               (echo-bar--frame-make-buffer buf-name))
+  (let (buf)
+    (with-current-buffer
+        (setq buf
+              (echo-bar--frame-make-buffer echo-bar--frame-buf-name))
       (let (buffer-read-only)
         (with-silent-modifications
           (erase-buffer)
@@ -416,7 +425,11 @@ overlays."
   "Get new text to be displayed from `echo-bar-default-function`."
   (interactive)
   (when echo-bar-mode
-    (echo-bar-set-text (funcall echo-bar-function))))
+    (with-current-buffer (get-buffer-create
+                          (if echo-bar-frame
+                              echo-bar--frame-buf-name
+                            " *Echo Area 0*"))
+      (echo-bar-set-text (funcall echo-bar-function)))))
 
 (defun echo-bar-default-function ()
   "The default function to use for the contents of the echo bar.
