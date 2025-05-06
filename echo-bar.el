@@ -289,15 +289,14 @@ If nil, don't update the echo bar automatically."
 (defun echo-bar--frame-make-buffer (name)
   "Make buffer with NAME for use in echo-bar's frames."
   (let ((ls line-spacing)
-        (buffer (get-buffer name)))
-    (or buffer ;; If we have a buffer already, assume we created it.
-        (with-current-buffer (setq buffer (get-buffer-create name))
+        (buffer (get-buffer-create name)))
+    (with-current-buffer buffer
       ;;; XXX HACK from corfu install mouse ignore map
       (use-local-map echo-bar--mouse-ignore-map)
       (dolist (var echo-bar--frame-buf-parameters)
         (set (make-local-variable (car var)) (cdr var)))
       (setq-local line-spacing ls)
-          buffer))))
+      buffer)))
 
 (defun echo-bar--frame-find (buffer &optional parent)
   "Find frame display BUFFER and with a specific PARENT.
