@@ -192,7 +192,9 @@ If nil, don't update the echo bar automatically."
   ;; Create overlays in each echo area buffer. Use `get-buffer-create' to make
   ;; sure that the buffer is created even if no messages were outputted before
   (if echo-bar-frame
+      (progn
       (add-hook 'after-make-frame-functions #'echo-bar--frame-after-make)
+        (add-hook 'window-size-change-functions #'echo-bar--update))
   (dolist (buf (mapcar #'get-buffer-create
                        '(" *Echo Area 0*" " *Echo Area 1*")))
     (with-current-buffer buf
@@ -216,14 +218,15 @@ If nil, don't update the echo bar automatically."
   (mapc 'delete-overlay echo-bar-overlays)
   (setq echo-bar-overlays nil)
 
-  ;; Remove text from Minibuf-0
-  (if echo-bar-frame
-      (progn
+  ;; Undo frame stuff
         (echo-bar--frame-delete-all echo-bar--frame-buf-name)
-        (remove-hook 'after-make-frame-functions #'echo-bar--frame-after-make))
+  (remove-hook 'after-make-frame-functions #'echo-bar--frame-after-make)
+  (remove-hook 'window-size-change-functions #'echo-bar--update)
+
+  ;; Remove text from Minibuf-0
   (with-current-buffer (window-buffer
                         (minibuffer-window))
-      (delete-region (point-min) (point-max))))
+    (delete-region (point-min) (point-max)))
 
   ;; Cancel the update timer
   (cancel-function-timers #'echo-bar-update)
@@ -419,6 +422,11 @@ overlays."
   "Setup the echo bar in the minibuffer."
   (unless echo-bar-frame
     (overlay-put (echo-bar--new-overlay t) 'priority 1))
+  (echo-bar-update))
+
+(defun echo-bar--update (&rest _)
+  "Call `echo-bar-update', ignoring arguments.
+Useful for hooks."
   (echo-bar-update))
 
 (defun echo-bar-update ()
