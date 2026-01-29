@@ -395,7 +395,10 @@ If PARENT is nil, ignore that check."
     (fit-frame-to-buffer frame)
     (pcase-let ((`(,px . ,py) (frame-position frame)))
       (unless (and (= x px) (= y py))
-        (set-frame-position frame x y)))
+        (if (fboundp 'set-frame-size-and-position)
+            (set-frame-size-and-position
+             frame nil nil x `(- ,(- y)))
+          (set-frame-position frame x y))))
     (make-frame-visible frame)
     ;; Unparent child frame if EXWM is used, otherwise EXWM buffers are drawn on
     ;; top of the Corfu child frame.
